@@ -1,5 +1,5 @@
 dev=1
-ver="0.1"
+ver="0.12"
 latest_update="2022/02/02"
 
 poke(0X5F5C, 12) poke(0X5F5D, 3) -- Input Delay(default 15, 4)
@@ -212,6 +212,7 @@ function space:_draw()
 			v.sx*=0.93
 			v.sy*=0.93
 			if(v.age>20) del(self.particles,v)
+
 		elseif v.type=="thrust-back" then
 			circfill(v.x,v.y,
 				sub(ptcl_size,v.age,_)*0.7,
@@ -221,30 +222,37 @@ function space:_draw()
 			v.sx*=0.93
 			v.sy*=0.93
 			if(v.age>16) del(self.particles,v)
-		elseif v.type=="bullet" then
+
+		elseif v.type=="bullet" or v.type=="bomb" then
 			local ox,oy=v.x,v.y
 			v.x+=v.sx-self.spd_x
 			v.y+=v.sy+self.spd_y
 			local c=tonum(sub(ptcl_fire_col,1+round(v.age/12),_),0x1)
-			line(ox,oy,v.x,v.y,c)
+			if v.type=="bullet" then
+				line(ox,oy,v.x,v.y,c)
+			else
+				spr(9,v.x-4,v.y-4)
+			end
 			if(v.age>60 or v.x>131 or v.y>131 or v.x<-4 or v.y<-4) del(self.particles,v)
 
-			-- temp hit test
+			-- hit test bullet & enemy
+			-- todo: 폭탄 임시 처리해 둔 상태
+			local dmg=(v.type=="bomb") and 10 or 1
+			local dist=(v.type=="bomb") and 8 or 5
 			for j,e in pairs(_enemies.list) do
-				if abs(e.x-v.x)<6 and abs(e.y-v.y)<6 then
-					if sqrt((e.x-v.x)^2+(e.y-v.y)^2)<=5 then
-						e.hp-=1
-						if e.hp<=0 then
-							add_explosion_eff(e.x,e.y,v.sx,v.sy)
-							del(_enemies.list,e)
-							sfx(3,3)
-						else
-							e.hit_count=8
-							add_hit_eff(v.x,v.y,v.angle)
-							sfx(2,3)
-						end
-						del(self.particles,v)
+				if is_near(v.x,v.y,e.x,e.y,dist) and get_dist(v.x,v.y,e.x,e.y)<=dist then
+					e.hp-=dmg
+					if e.hp<=0 then
+						add_explosion_eff(e.x,e.y,v.sx,v.sy)
+						del(_enemies.list,e)
+						sfx(3,3)
+					else
+						e.hit_count=8
+						local a=atan2(e.x-v.x,e.y-v.y)
+						add_hit_eff(v.x,v.y,a)
+						sfx(2,3)
 					end
+					del(self.particles,v)
 				end
 			end
 
@@ -257,6 +265,7 @@ function space:_draw()
 			v.sx*=0.9
 			v.sy*=0.9
 			if(v.age>40) del(self.particles,v)
+
 		elseif v.type=="explosion_dust" then
 			local c=tonum(sub(ptcl_col_explosion_dust,1+flr(v.age/5),_),0x1)
 			pset(v.x,v.y,c)
@@ -265,6 +274,7 @@ function space:_draw()
 			v.sx*=0.94
 			v.sy*=0.94
 			if(v.age>20) del(self.particles,v)
+
 		elseif v.type=="hit" then
 			local c=tonum(sub(ptcl_col_hit,1+flr(v.age/3),_),0x1)
 			pset(v.x,v.y,c)
@@ -273,6 +283,7 @@ function space:_draw()
 			v.sx*=0.94
 			v.sy*=0.94
 			if(v.age>12) del(self.particles,v)
+
 		end
 		v.age+=1
 	end
@@ -301,6 +312,9 @@ function ship:init()
 	self.fire_spd=1.4 -- 1.4 -> 3.0
 	self.fire_intv=0
 	self.fire_intv_full=16 -- 20 -> 5
+	self.bomb_spd=0.8
+	self.bomb_intv=0
+	self.bomb_intv_full=60
 	self.hit_count=0
 	self:show(true)
 	self:on("update",self.on_update)
@@ -402,7 +416,25 @@ function ship:on_update()
 			y=self.head.y,
 			sx=fire_spd_x,
 			sy=fire_spd_y,
-			angle=self.angle,
+			age=1
+		})
+	end
+
+	-- bomb
+	-- todo: 폭탄 인터벌이든 뭐든 처리해야 함
+	self.bomb_intv-=1
+	if btn(5) and self.bomb_intv<=0 then
+		sfx(6,-1)
+		self.bomb_intv=self.bomb_intv_full
+		local fire_spd_x=cos(self.angle)*self.bomb_spd+self.spd_x
+		local fire_spd_y=sin(self.angle)*self.bomb_spd+self.spd_y
+		add(_space_f.particles,
+		{
+			type="bomb",
+			x=self.head.x,
+			y=self.head.y,
+			sx=fire_spd_x,
+			sy=fire_spd_y,
 			age=1
 		})
 	end
@@ -444,22 +476,20 @@ function ship:on_update()
 
 	-- hit test with enemies
 	for i,e in pairs(_enemies.list) do
-		if abs(e.x-cx)<9 and abs(e.y-cy)<9 then
-			if sqrt((e.x-cx)^2+(e.y-cy)^2)<=8 then
-				-- simply speed change(don't consider hit direction)
-				local sx=e.spd_x
-				local sy=e.spd_y
-				e.spd_x=self.spd_x*1.2
-				e.spd_y=self.spd_y*1.2
-				self.spd_x*=-0.3
-				self.spd_y*=-0.3
-				sfx(2,3)
-				self.hit_count=8
-				e.hit_count=8
-				e.hp-=1
-				local d=atan2(e.x-cx,e.y-cy)
-				add_hit_eff((cx+e.x)/2,(cy+e.y)/2,d)
-			end
+		if is_near(e.x,e.y,cx,cy,8) and get_dist(e.x,e.y,cx,cy)<=8 then
+			-- simply speed change(don't consider hit direction)
+			local sx=e.spd_x
+			local sy=e.spd_y
+			e.spd_x=self.spd_x*1.2
+			e.spd_y=self.spd_y*1.2
+			self.spd_x*=-0.3
+			self.spd_y*=-0.3
+			sfx(2,3)
+			self.hit_count=8
+			e.hit_count=8
+			e.hp-=1
+			local d=atan2(e.x-cx,e.y-cy)
+			add_hit_eff((cx+e.x)/2,(cy+e.y)/2,d)
 		end
 	end
 
@@ -564,6 +594,21 @@ end
 
 -- <etc. functions> --------------------
 
+function is_near(x1,y1,x2,y2,r)
+	return abs(x2-x1)<=r and abs(y1-y1)<=r
+end
+
+function get_dist(x1,y1,x2,y2)
+	return sqrt((x2-x1)^2+(y2-y1)^2)
+end
+
+--[[ function is_hit(x1,y1,r1,x2,y2,r2)
+	local r=r1+r2
+	if abs(x2-x1)>r or abs(y2-y1)>r then return false
+	elseif sqrt((x2-x1)^2+(y2-y1)^2)<=r then return true end
+	return false
+end ]]
+
 function add_explosion_eff(x,y,spd_x,spd_y)
 	for i=1,16 do
 		local sx=cos(i/16+rnd()*0.1)
@@ -609,6 +654,7 @@ end
 
 
 -- <log, system info> --------------------
+
 log_d=nil
 log_counter=0
 function log(...)
@@ -652,7 +698,7 @@ function _init()
 
 	_space=space.new()
 	_ship=ship.new()
-	_enemies=enemies.new(10)
+	_enemies=enemies.new(16)
 		
 	stage:add_child(_space)
 	stage:add_child(_ship)
