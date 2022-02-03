@@ -1,5 +1,5 @@
 dev=1
-ver="0.12"
+ver="0.13"
 latest_update="2022/02/02"
 
 poke(0X5F5C, 12) poke(0X5F5D, 3) -- Input Delay(default 15, 4)
@@ -137,6 +137,7 @@ function round(n) return flr(n+.5) end
 function swap(v) if v==0 then return 1 else return 0 end end -- 1 0 swap
 function clamp(a,min_v,max_v) return min(max(a,min_v),max_v) end
 function rndf(lo,hi) return lo+rnd()*(hi-lo) end -- random real number between lo and hi
+function rndi(n) return round(rnd()*n) end -- random int
 function printa(t,x,y,c,align) -- 0.5 center, 1 right align
 	x-=align*4*#t
 	print(t,x,y,c)
@@ -231,26 +232,27 @@ function space:_draw()
 			if v.type=="bullet" then
 				line(ox,oy,v.x,v.y,c)
 			else
-				spr(9,v.x-4,v.y-4)
+				spr(v.spr,v.x-4,v.y-4)
 			end
-			if(v.age>60 or v.x>131 or v.y>131 or v.x<-4 or v.y<-4) del(self.particles,v)
+			if(v.age>v.age_max or v.x>131 or v.y>131 or v.x<-4 or v.y<-4) del(self.particles,v)
 
 			-- hit test bullet & enemy
 			-- todo: 폭탄 임시 처리해 둔 상태
 			local dmg=(v.type=="bomb") and 10 or 1
-			local dist=(v.type=="bomb") and 8 or 5
+			local dist=(v.type=="bomb") and 9 or 6
 			for j,e in pairs(_enemies.list) do
-				if is_near(v.x,v.y,e.x,e.y,dist) and get_dist(v.x,v.y,e.x,e.y)<=dist then
+				if abs(v.x-e.x)<=dist and abs(v.y-e.y)<=dist and get_dist(v.x,v.y,e.x,e.y)<=dist then
 					e.hp-=dmg
 					if e.hp<=0 then
-						add_explosion_eff(e.x,e.y,v.sx,v.sy)
+						add_explosion_eff(e.x,e.y,v.sx,v.sy,v.type=="bomb")
 						del(_enemies.list,e)
-						sfx(3,3)
+						sfx(v.type=="bomb" and 0 or 3,3)
 					else
 						e.hit_count=8
 						local a=atan2(e.x-v.x,e.y-v.y)
 						add_hit_eff(v.x,v.y,a)
-						sfx(2,3)
+						-- sfx(2,3)
+						sfx(22,3)
 					end
 					del(self.particles,v)
 				end
@@ -258,7 +260,7 @@ function space:_draw()
 
 		elseif v.type=="explosion" then
 			circfill(v.x,v.y,
-				sub(ptcl_size_explosion,v.age,_),
+				sub(ptcl_size_explosion,v.age,_)*v.size,
 				tonum(sub(ptcl_col_explosion,v.age,_),0x1))
 			v.x+=v.sx-self.spd_x+rnd(1)-0.5
 			v.y+=v.sy+self.spd_y+rnd(1)-0.5
@@ -311,8 +313,8 @@ function ship:init()
 	self.head={x=0,y=0}
 	self.fire_spd=1.4 -- 1.4 -> 3.0
 	self.fire_intv=0
-	self.fire_intv_full=16 -- 20 -> 5
-	self.bomb_spd=0.8
+	self.fire_intv_full=10 -- 20 -> 5
+	self.bomb_spd=0.7
 	self.bomb_intv=0
 	self.bomb_intv_full=60
 	self.hit_count=0
@@ -405,7 +407,8 @@ function ship:on_update()
 	-- fire
 	self.fire_intv-=1
 	if btn(4) and self.fire_intv<=0 then
-		sfx(6,-1)
+		--sfx(1,-1)
+		sfx(23,-1)
 		self.fire_intv=self.fire_intv_full
 		local fire_spd_x=cos(self.angle)*self.fire_spd+self.spd_x
 		local fire_spd_y=sin(self.angle)*self.fire_spd+self.spd_y
@@ -416,6 +419,7 @@ function ship:on_update()
 			y=self.head.y,
 			sx=fire_spd_x,
 			sy=fire_spd_y,
+			age_max=60,
 			age=1
 		})
 	end
@@ -435,6 +439,8 @@ function ship:on_update()
 			y=self.head.y,
 			sx=fire_spd_x,
 			sy=fire_spd_y,
+			spr=16+round(self.angle*8-0.0625)%8,
+			age_max=120,
 			age=1
 		})
 	end
@@ -447,8 +453,8 @@ function ship:on_update()
 			type="thrust",
 			x=self.tail.x-2+rnd(4),
 			y=self.tail.y-2+rnd(4),
-			sx=-thr_x*160,
-			sy=-thr_y*160,
+			sx=-thr_x*130,
+			sy=-thr_y*130,
 			age=1
 		})
 	elseif self.thrust_acc<-0.0001 then
@@ -458,8 +464,8 @@ function ship:on_update()
 			type="thrust-back",
 			x=self.head.x-2+rnd(4),
 			y=self.head.y-2+rnd(4),
-			sx=-thr_x*160,
-			sy=-thr_y*160,
+			sx=-thr_x*120,
+			sy=-thr_y*120,
 			age=1
 		})
 	else
@@ -476,14 +482,16 @@ function ship:on_update()
 
 	-- hit test with enemies
 	for i,e in pairs(_enemies.list) do
-		if is_near(e.x,e.y,cx,cy,8) and get_dist(e.x,e.y,cx,cy)<=8 then
+		if abs(e.x-cx)<=8 and abs(e.y-cy)<=8 and get_dist(e.x,e.y,cx,cy)<=8 then	
 			-- simply speed change(don't consider hit direction)
 			local sx=e.spd_x
 			local sy=e.spd_y
 			e.spd_x=self.spd_x*1.2
 			e.spd_y=self.spd_y*1.2
-			self.spd_x*=-0.3
-			self.spd_y*=-0.3
+			self.spd_x=sx*1.2
+			self.spd_y=sy*1.2
+			-- self.spd_x*=-0.3
+			-- self.spd_y*=-0.3
 			sfx(2,3)
 			self.hit_count=8
 			e.hit_count=8
@@ -516,8 +524,8 @@ function enemies:init(enemies_num)
 	for i=1,enemies_num do
 		local x=cos(i/enemies_num)
 		local y=sin(i/enemies_num)
-		self:add(x*50,y*50)
 		self:add(x*70,y*70)
+		self:add(x*100,y*100)
 	end
 
 	self:show(true)
@@ -528,16 +536,19 @@ function enemies:_draw()
 		e.space_y+=e.spd_y+_space.spd_y
 		e.x=e.space_x+cx
 		e.y=e.space_y+cy
+		e.spd_x+=e.acc_x
+		e.spd_y+=e.acc_y
 		e.spd_x*=0.99
 		e.spd_y*=0.99
+		
 		if e.x<-4 then
 			spr(5,0,clamp(e.y-4,4,118))
 		elseif e.x>131 then
-			spr(5,127-8,clamp(e.y-4,4,118),1,1,true)
+			spr(5,120,clamp(e.y-4,4,118),1,1,true)
 		elseif e.y<-4 then
 			spr(6,clamp(e.x-4,4,118),0)
 		elseif e.y>131 then
-			spr(6,clamp(e.x-4,4,118),127-8,1,1,false,true)
+			spr(6,clamp(e.x-4,4,118),120,1,1,false,true)
 		else
 			if e.hit_count>0 then
 				spr(7,e.x-4,e.y-4)
@@ -548,24 +559,40 @@ function enemies:_draw()
 		end
 	end
 
+	-- head to ship
+	for e in all(self.list) do
+		e.think_count-=1
+		if e.think_count<=0 then
+			local a=atan2(cx-e.x,cy-e.y)
+			local sx=cos(a)
+			local sy=sin(a)
+			e.acc_x=sx*0.004
+			e.acc_y=sy*0.004
+			e.think_count=60
+			-- todo: attack ship! *************************
+		end
+	end
+
 	-- hit test between enemies
 	for i,e1 in pairs(self.list) do
 		for j=i+1,#self.list do
 			local e2=self.list[j]
-			if abs(e1.x-e2.x)<=8 and abs(e1.y-e2.y)<=8 then
-				if sqrt((e1.x-e2.x)^2+(e1.y-e2.y)^2)<8 then
-					local sx,sy=e1.spd_x,e1.spd_y
-					e1.spd_x=e2.spd_x*1.2
-					e1.spd_y=e2.spd_y*1.2
-					e2.spd_x=sx*1.2
-					e2.spd_y=sy*1.2
-					sfx(2,3)
-					e1.hit_count=8
-					e2.hit_count=8
-					e1.hp-=1
-					e2.hp-=1
+			if abs(e1.x-e2.x)<=8 and abs(e1.y-e2.y)<=8 and get_dist(e1.x,e1.y,e2.x,e2.y)<=8 then
+				local sx,sy=e1.spd_x,e1.spd_y
+				e1.spd_x=e2.spd_x*1.2
+				e1.spd_y=e2.spd_y*1.2
+				e2.spd_x=sx*1.2
+				e2.spd_y=sy*1.2
+				-- todo: 최대 속도 제한 + 좀 더 정확한 물리 계산
+				e1.hit_count=8
+				e2.hit_count=8
+				e1.hp-=1
+				e2.hp-=1
+				local hx,hy=(e1.x+e2.x)/2,(e1.y+e2.y)/2
+				if hx>0 and hx<127 and hy>0 and hy<127 then
 					local d=atan2(e1.x-e2.x,e1.y-e2.y)
-					add_hit_eff((e1.x+e2.x)/2,(e1.y+e2.y)/2,d)
+					add_hit_eff(hx,hy,d)
+					sfx(2,3)
 				end
 			end
 		end
@@ -573,18 +600,21 @@ function enemies:_draw()
 
 end
 function enemies:add(x,y)
-	local hp,spr=3,3
-	if(rnd()>0.9) hp,spr=10,4
+	local hp,spr=3,4
+	if(rnd()>0.9) hp,spr=20,3
 		
 	local e={
 		x=0,
 		y=0,
 		spd_x=(rnd(1)-0.5)/4,
 		spd_y=(rnd(1)-0.5)/4,
+		acc_x=0,
+		acc_y=0,
 		space_x=x,
 		space_y=y,
 		hp=hp,
 		hit_count=0,
+		think_count=120+rndi(120),
 		spr=spr
 	}
 	add(self.list,e)
@@ -594,25 +624,22 @@ end
 
 -- <etc. functions> --------------------
 
-function is_near(x1,y1,x2,y2,r)
-	return abs(x2-x1)<=r and abs(y1-y1)<=r
-end
+-- function is_near(x1,y1,x2,y2,r)
+-- 	if(abs(x2-x1)>r) return false
+-- 	if(abs(y2-y1)>r) return false
+-- 	return true
+-- end
 
 function get_dist(x1,y1,x2,y2)
 	return sqrt((x2-x1)^2+(y2-y1)^2)
 end
 
---[[ function is_hit(x1,y1,r1,x2,y2,r2)
-	local r=r1+r2
-	if abs(x2-x1)>r or abs(y2-y1)>r then return false
-	elseif sqrt((x2-x1)^2+(y2-y1)^2)<=r then return true end
-	return false
-end ]]
-
-function add_explosion_eff(x,y,spd_x,spd_y)
-	for i=1,16 do
-		local sx=cos(i/16+rnd()*0.1)
-		local sy=sin(i/16+rnd()*0.1)
+function add_explosion_eff(x,y,spd_x,spd_y,is_bomb)
+	local count=is_bomb and 32 or 16
+	for i=1,count do
+		local sx=cos(i/count+rnd()*0.1)
+		local sy=sin(i/count+rnd()*0.1)
+		if is_bomb then sx*=1.6 sy*=1.6 end
 		add(_space_f.particles,
 		{
 			type="explosion",
@@ -620,7 +647,8 @@ function add_explosion_eff(x,y,spd_x,spd_y)
 			y=y+rnd(3)-1.5,
 			sx=sx*(0.6+rnd()*1.4)+spd_x*0.7,
 			sy=sy*(0.6+rnd()*1.4)+spd_y*0.7,
-			age=1+round(rnd(10))
+			size=is_bomb and 1.5 or 1,
+			age=1+rndi(10)
 		})
 		add(_space_f.particles,
 		{
@@ -629,7 +657,7 @@ function add_explosion_eff(x,y,spd_x,spd_y)
 			y=y+rnd(4)-2,
 			sx=sx*(1+rnd()*2)+spd_x,
 			sy=sy*(1+rnd()*2)+spd_y,
-			age=1+round(rnd(5))
+			age=1+rndi(5)
 		})
 	end
 end
@@ -646,7 +674,7 @@ function add_hit_eff(x,y,angle)
 			y=y+rnd(4)-2,
 			sx=sx*(1+rnd()*3),
 			sy=sy*(1+rnd()*3),
-			age=1+round(rnd(5))
+			age=1+rndi(5)
 		})
 	end
 end
@@ -676,9 +704,8 @@ function print_system_info()
 	local cpu=round(stat(1)*10000)
 	local mem=tostr(stat(0))
 	local s=(cpu\100).."."..(cpu%100\10)..(cpu%10).."%"
-	printa(s,126,2,0,1)
-	printa(s,127,1,8,1)
-	printa(mem,126,8,0,1) printa(mem,127,7,8,1)
+	printa(s,128,2,0,1) printa(s,127,1,8,1)
+	printa(mem,128,8,0,1) printa(mem,127,7,8,1)
 end
 
 
@@ -698,7 +725,7 @@ function _init()
 
 	_space=space.new()
 	_ship=ship.new()
-	_enemies=enemies.new(16)
+	_enemies=enemies.new(14)
 		
 	stage:add_child(_space)
 	stage:add_child(_ship)
